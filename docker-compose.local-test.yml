@@ -1,0 +1,65 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inngest
+      POSTGRES_PASSWORD: inngest
+      POSTGRES_DB: inngest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inngest -d inngest"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  inngest:
+    image: ghcr.io/kartikey321/inngest:sha-cd83e4eb76636e6800e1e9103e6035a09168d382
+    platform: linux/amd64
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "18288:8288"
+      - "18289:8289"
+    command:
+      - "inngest"
+      - "start"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8288"
+      - "--sdk-url"
+      - "http://host.docker.internal:3000/api/inngest"
+      - "--event-key"
+      - "dev-event"
+      - "--signing-key"
+      - "0123456789abcdef0123456789abcdef"
+      - "--redis-uri"
+      - "redis://redis:6379"
+      - "--postgres-uri"
+      - "postgres://inngest:inngest@postgres:5432/inngest?sslmode=disable"
+      - "--queue-workers"
+      - "2000"
+      - "--queue-peek-min"
+      - "500"
+      - "--queue-peek-max"
+      - "2000"
+      - "--queue-min-workers-free"
+      - "1"
+      - "--queue-partition-lease-ms"
+      - "2000"
+      - "--tick"
+      - "50"
+      - "--poll-interval"
+      - "0"
