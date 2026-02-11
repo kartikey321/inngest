@@ -88,7 +88,7 @@ func (q *queueProcessor) ProcessShadowPartition(ctx context.Context, shadowPart 
 
 	// acquire lease for shadow partition
 	leaseID, err := Duration(ctx, shard.Name(), "shadow_partition_lease", q.Clock().Now(), func(ctx context.Context) (*ulid.ULID, error) {
-		leaseID, err := q.primaryQueueShard.ShadowPartitionLease(ctx, shadowPart, ShadowPartitionLeaseDuration)
+		leaseID, err := q.primaryQueueShard.ShadowPartitionLease(ctx, shadowPart, q.shadowPartitionLeaseDuration)
 		return leaseID, err
 	})
 	if err != nil {
@@ -136,12 +136,12 @@ func (q *queueProcessor) ProcessShadowPartition(ctx context.Context, shadowPart 
 			select {
 			case <-extendLeaseCtx.Done():
 				return
-			case <-time.Tick(ShadowPartitionLeaseDuration / 2):
+			case <-time.Tick(q.shadowPartitionLeaseDuration / 2):
 				if leaseID == nil {
 					return
 				}
 
-				newLeaseID, err := q.primaryQueueShard.ShadowPartitionExtendLease(ctx, shadowPart, *leaseID, ShadowPartitionLeaseDuration)
+				newLeaseID, err := q.primaryQueueShard.ShadowPartitionExtendLease(ctx, shadowPart, *leaseID, q.shadowPartitionLeaseDuration)
 				if err != nil {
 					jobCancel()
 

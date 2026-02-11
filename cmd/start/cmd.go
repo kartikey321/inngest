@@ -103,6 +103,40 @@ func Command() *cli.Command {
 				Value:    devserver.DefaultQueueWorkers,
 				Usage:    "Number of executor workers to execute steps from the queue",
 			},
+			&cli.StringFlag{
+				Category: "Advanced",
+				Name:     "disable-fifo-functions",
+				Usage:    "Comma-separated function IDs to process in parallel (disables FIFO ordering per function)",
+			},
+			&cli.StringFlag{
+				Category: "Advanced",
+				Name:     "disable-fifo-accounts",
+				Usage:    "Comma-separated account IDs to process in parallel (disables FIFO ordering per account)",
+			},
+			&cli.IntFlag{
+				Category: "Advanced",
+				Name:     "queue-peek-min",
+				Value:    devserver.DefaultQueuePeekMin,
+				Usage:    "Minimum queue peek size per partition scan",
+			},
+			&cli.IntFlag{
+				Category: "Advanced",
+				Name:     "queue-peek-max",
+				Value:    devserver.DefaultQueuePeekMax,
+				Usage:    "Maximum queue peek size per partition scan",
+			},
+			&cli.IntFlag{
+				Category: "Advanced",
+				Name:     "queue-min-workers-free",
+				Value:    devserver.DefaultQueueMinWorkersFree,
+				Usage:    "Minimum free workers required before scanning for additional partitions",
+			},
+			&cli.IntFlag{
+				Category: "Advanced",
+				Name:     "queue-partition-lease-ms",
+				Value:    devserver.DefaultQueuePartitionLeaseMS,
+				Usage:    "Partition lease duration in milliseconds",
+			},
 			&cli.IntFlag{
 				Category: "Advanced",
 				Name:     "tick",

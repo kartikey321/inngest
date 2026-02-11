@@ -50,7 +50,7 @@ LOOP:
 			break LOOP
 
 		case <-tick.Chan():
-			if q.capacity() < minWorkersFree {
+			if q.capacity() < q.minWorkersFree {
 				// Wait until we have more workers free.  This stops us from
 				// claiming a partition to work on a single job, ensuring we
 				// have capacity to run at least MinWorkersFree concurrent

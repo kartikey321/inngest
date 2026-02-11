@@ -30,13 +30,13 @@ type mockQueueProcessor struct {
 	shadowMap map[string]ShadowContinuation
 }
 
-func (m *mockQueueProcessor) Shard() QueueShard                                    { return m.shard }
-func (m *mockQueueProcessor) Clock() clockwork.Clock                               { return m.clock }
-func (m *mockQueueProcessor) Semaphore() util.TrackingSemaphore                    { return m.sem }
-func (m *mockQueueProcessor) Options() *QueueOptions                               { return m.opts }
-func (m *mockQueueProcessor) Workers() chan ProcessItem                            { return m.workers }
-func (m *mockQueueProcessor) SequentialLease() *ulid.ULID                          { return m.seqLease }
-func (m *mockQueueProcessor) ShadowPartitionWorkers() chan ShadowPartitionChanMsg  { return m.shadowCh }
+func (m *mockQueueProcessor) Shard() QueueShard                                   { return m.shard }
+func (m *mockQueueProcessor) Clock() clockwork.Clock                              { return m.clock }
+func (m *mockQueueProcessor) Semaphore() util.TrackingSemaphore                   { return m.sem }
+func (m *mockQueueProcessor) Options() *QueueOptions                              { return m.opts }
+func (m *mockQueueProcessor) Workers() chan ProcessItem                           { return m.workers }
+func (m *mockQueueProcessor) SequentialLease() *ulid.ULID                         { return m.seqLease }
+func (m *mockQueueProcessor) ShadowPartitionWorkers() chan ShadowPartitionChanMsg { return m.shadowCh }
 func (m *mockQueueProcessor) AddShadowContinue(ctx context.Context, p *QueueShadowPartition, ctr uint) {
 }
 func (m *mockQueueProcessor) GetShadowContinuations() map[string]ShadowContinuation {
@@ -56,6 +56,12 @@ type mockShardForIterator struct {
 	// constraintResult controls what ItemLeaseConstraintCheck returns
 	constraintResultFunc func() enums.QueueConstraint
 	leaseCount           int32
+
+	peekItems []*QueueItem
+
+	constraintCheckDelay          time.Duration
+	activeConstraintChecks        atomic.Int32
+	maxConcurrentConstraintChecks atomic.Int32
 }
 
 func (m *mockShardForIterator) Name() string {
@@ -76,8 +82,21 @@ func (m *mockShardForIterator) ItemLeaseConstraintCheck(
 ) (ItemLeaseConstraintCheckResult, error) {
 	atomic.AddInt32(&m.leaseCount, 1)
 
-	// Add some delay to increase chance of race
-	time.Sleep(time.Microsecond * 50)
+	active := m.activeConstraintChecks.Add(1)
+	for {
+		curr := m.maxConcurrentConstraintChecks.Load()
+		if active <= curr {
+			break
+		}
+		if m.maxConcurrentConstraintChecks.CompareAndSwap(curr, active) {
+			break
+		}
+	}
+	defer m.activeConstraintChecks.Add(-1)
+
+	if m.constraintCheckDelay > 0 {
+		time.Sleep(m.constraintCheckDelay)
+	}
 
 	var constraint enums.QueueConstraint
 	if m.constraintResultFunc != nil {
@@ -106,10 +125,10 @@ func (m *mockShardForIterator) EnqueueItem(ctx context.Context, i QueueItem, at 
 	return i, nil
 }
 func (m *mockShardForIterator) Peek(ctx context.Context, partition *QueuePartition, until time.Time, limit int64) ([]*QueueItem, error) {
-	return nil, nil
+	return m.peekItems, nil
 }
 func (m *mockShardForIterator) PeekRandom(ctx context.Context, partition *QueuePartition, until time.Time, limit int64) ([]*QueueItem, error) {
-	return nil, nil
+	return m.peekItems, nil
 }
 func (m *mockShardForIterator) ExtendLease(ctx context.Context, i QueueItem, leaseID ulid.ULID, duration time.Duration, opts ...ExtendLeaseOptionFn) (*ulid.ULID, error) {
 	return nil, nil
@@ -124,7 +143,8 @@ func (m *mockShardForIterator) PartitionPeek(ctx context.Context, sequential boo
 	return nil, nil
 }
 func (m *mockShardForIterator) PartitionLease(ctx context.Context, p *QueuePartition, duration time.Duration, opts ...PartitionLeaseOpt) (*ulid.ULID, int, error) {
-	return nil, 0, nil
+	id := ulid.Make()
+	return &id, 0, nil
 }
 func (m *mockShardForIterator) PartitionRequeue(ctx context.Context, p *QueuePartition, at time.Time, forceAt bool) error {
 	return nil
@@ -589,4 +609,77 @@ func TestProcessorIteratorIsCustomKeyLimitOnlyRace(t *testing.T) {
 	// With atomic operations, this should now be deterministic
 	require.False(t, isCustomKeyLimitOnly,
 		"IsCustomKeyLimitOnly should be false when function concurrency limits are hit")
+}
+
+func TestProcessPartition_DisableFifoForFunctionsEnablesParallelProcessing(t *testing.T) {
+	ctx := context.Background()
+
+	accountID := uuid.New()
+	envID := uuid.New()
+	fnID := uuid.New()
+
+	now := time.Now()
+	items := []*QueueItem{
+		{
+			ID:          ulid.Make().String(),
+			FunctionID:  fnID,
+			WorkspaceID: envID,
+			AtMS:        now.UnixMilli(),
+			Data: Item{
+				Kind: KindEdge,
+				Identifier: state.Identifier{
+					AccountID:   accountID,
+					WorkspaceID: envID,
+					WorkflowID:  fnID,
+					RunID:       ulid.Make(),
+				},
+			},
+		},
+		{
+			ID:          ulid.Make().String(),
+			FunctionID:  fnID,
+			WorkspaceID: envID,
+			AtMS:        now.UnixMilli(),
+			Data: Item{
+				Kind: KindEdge,
+				Identifier: state.Identifier{
+					AccountID:   accountID,
+					WorkspaceID: envID,
+					WorkflowID:  fnID,
+					RunID:       ulid.Make(),
+				},
+			},
+		},
+	}
+
+	shard := &mockShardForIterator{
+		name:                 "test-shard",
+		peekItems:            items,
+		constraintCheckDelay: 25 * time.Millisecond,
+	}
+
+	qp, err := New(
+		ctx,
+		"test",
+		shard,
+		nil,
+		nil,
+		WithNumWorkers(10),
+		WithDisableFifoForFunctions(map[string]struct{}{
+			fnID.String(): {},
+		}),
+	)
+	require.NoError(t, err)
+
+	partition := &QueuePartition{
+		ID:         fnID.String(),
+		FunctionID: &fnID,
+		EnvID:      &envID,
+		AccountID:  accountID,
+	}
+
+	err = qp.ProcessPartition(ctx, partition, 0, false)
+	require.NoError(t, err)
+
+	require.Greater(t, shard.maxConcurrentConstraintChecks.Load(), int32(1))
 }

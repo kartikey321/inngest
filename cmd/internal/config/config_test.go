@@ -142,6 +142,12 @@ func TestEnvironmentVariableLoading(t *testing.T) {
 	os.Setenv("INNGEST_HOST", "env-host")
 	os.Setenv("INNGEST_PORT", "8292")
 	os.Setenv("INNGEST_POLL_INTERVAL", "20")
+	os.Setenv("INNGEST_QUEUE_PEEK_MIN", "500")
+	os.Setenv("INNGEST_QUEUE_PEEK_MAX", "2000")
+	os.Setenv("INNGEST_QUEUE_MIN_WORKERS_FREE", "2")
+	os.Setenv("INNGEST_QUEUE_PARTITION_LEASE_MS", "2500")
+	os.Setenv("INNGEST_DISABLE_FIFO_FUNCTIONS", "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222")
+	os.Setenv("INNGEST_DISABLE_FIFO_ACCOUNTS", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	os.Setenv("INNGEST_SIGNING_KEY", "env1234567890abcdefenv1234567890abcdefenv1234567890abcdefenv123456")
 	os.Setenv("INNGEST_EVENT_KEY", "env-key-1,env-key-2,env-key-3")
 
@@ -151,6 +157,12 @@ func TestEnvironmentVariableLoading(t *testing.T) {
 		os.Unsetenv("INNGEST_HOST")
 		os.Unsetenv("INNGEST_PORT")
 		os.Unsetenv("INNGEST_POLL_INTERVAL")
+		os.Unsetenv("INNGEST_QUEUE_PEEK_MIN")
+		os.Unsetenv("INNGEST_QUEUE_PEEK_MAX")
+		os.Unsetenv("INNGEST_QUEUE_MIN_WORKERS_FREE")
+		os.Unsetenv("INNGEST_QUEUE_PARTITION_LEASE_MS")
+		os.Unsetenv("INNGEST_DISABLE_FIFO_FUNCTIONS")
+		os.Unsetenv("INNGEST_DISABLE_FIFO_ACCOUNTS")
 		os.Unsetenv("INNGEST_SIGNING_KEY")
 		os.Unsetenv("INNGEST_EVENT_KEY")
 	}()
@@ -167,6 +179,12 @@ func TestEnvironmentVariableLoading(t *testing.T) {
 	assert.Equal(t, "env-host", config.Host)
 	assert.Equal(t, "8292", config.Port)
 	assert.Equal(t, 20, config.PollInterval)
+	assert.Equal(t, 500, config.QueuePeekMin)
+	assert.Equal(t, 2000, config.QueuePeekMax)
+	assert.Equal(t, 2, config.QueueMinWorkersFree)
+	assert.Equal(t, 2500, config.QueuePartitionLeaseMS)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222", config.DisableFifoFunctions)
+	assert.Equal(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", config.DisableFifoAccounts)
 	assert.Equal(t, "env1234567890abcdefenv1234567890abcdefenv1234567890abcdefenv123456", config.SigningKey)
 	assert.Equal(t, []string{"env-key-1", "env-key-2", "env-key-3"}, config.EventKey)
 }
@@ -477,6 +495,38 @@ func TestSingleValueArrayHandling(t *testing.T) {
 	// Single values should be converted to arrays
 	assert.Equal(t, []string{"http://single:3000/api/inngest"}, config.SdkURL)
 	assert.Equal(t, []string{"single-key"}, config.EventKey)
+}
+
+func TestQueueTuningEnvironmentVariables(t *testing.T) {
+	setupTest()
+
+	os.Setenv("INNGEST_QUEUE_PEEK_MIN", "321")
+	os.Setenv("INNGEST_QUEUE_PEEK_MAX", "1234")
+	os.Setenv("INNGEST_QUEUE_MIN_WORKERS_FREE", "9")
+	os.Setenv("INNGEST_QUEUE_PARTITION_LEASE_MS", "2500")
+	os.Setenv("INNGEST_DISABLE_FIFO_FUNCTIONS", "fn-a,fn-b")
+	os.Setenv("INNGEST_DISABLE_FIFO_ACCOUNTS", "acct-a,acct-b")
+
+	defer func() {
+		os.Unsetenv("INNGEST_QUEUE_PEEK_MIN")
+		os.Unsetenv("INNGEST_QUEUE_PEEK_MAX")
+		os.Unsetenv("INNGEST_QUEUE_MIN_WORKERS_FREE")
+		os.Unsetenv("INNGEST_QUEUE_PARTITION_LEASE_MS")
+		os.Unsetenv("INNGEST_DISABLE_FIFO_FUNCTIONS")
+		os.Unsetenv("INNGEST_DISABLE_FIFO_ACCOUNTS")
+	}()
+
+	err := loadEnvironmentVariables()
+	require.NoError(t, err)
+
+	cmd := &cli.Command{}
+
+	assert.Equal(t, 321, GetIntValue(cmd, "queue-peek-min", 0))
+	assert.Equal(t, 1234, GetIntValue(cmd, "queue-peek-max", 0))
+	assert.Equal(t, 9, GetIntValue(cmd, "queue-min-workers-free", 0))
+	assert.Equal(t, 2500, GetIntValue(cmd, "queue-partition-lease-ms", 0))
+	assert.Equal(t, "fn-a,fn-b", GetValue(cmd, "disable-fifo-functions", ""))
+	assert.Equal(t, "acct-a,acct-b", GetValue(cmd, "disable-fifo-accounts", ""))
 }
 
 func TestMixedConfigSources(t *testing.T) {

@@ -84,6 +84,16 @@ func WithNumWorkers(n int32) QueueOpt {
 	}
 }
 
+// WithMinWorkersFree configures how many worker slots should remain free before scanning new partitions.
+func WithMinWorkersFree(n int64) QueueOpt {
+	return func(q *QueueOptions) {
+		if n < 0 {
+			n = 0
+		}
+		q.minWorkersFree = n
+	}
+}
+
 func WithShadowNumWorkers(n int32) QueueOpt {
 	return func(q *QueueOptions) {
 		q.numShadowWorkers = n
@@ -155,6 +165,18 @@ func WithShadowPollTick(t time.Duration) QueueOpt {
 func WithBacklogNormalizePollTick(t time.Duration) QueueOpt {
 	return func(q *QueueOptions) {
 		q.backlogNormalizePollTick = t
+	}
+}
+
+// WithPartitionLeaseDuration configures partition lease duration and related shadow/backlog lease durations.
+func WithPartitionLeaseDuration(d time.Duration) QueueOpt {
+	return func(q *QueueOptions) {
+		if d <= 0 {
+			return
+		}
+		q.partitionLeaseDuration = d
+		q.shadowPartitionLeaseDuration = d
+		q.backlogNormalizeLeaseDuration = d
 	}
 }
 
@@ -390,9 +412,13 @@ type QueueOptions struct {
 	// remain idempotent.
 	IdempotencyTTLFunc func(context.Context, QueueItem) time.Duration
 	// pollTick is the interval between each scan for jobs.
-	pollTick                 time.Duration
-	shadowPollTick           time.Duration
-	backlogNormalizePollTick time.Duration
+	pollTick                      time.Duration
+	shadowPollTick                time.Duration
+	backlogNormalizePollTick      time.Duration
+	minWorkersFree                int64
+	partitionLeaseDuration        time.Duration
+	shadowPartitionLeaseDuration  time.Duration
+	backlogNormalizeLeaseDuration time.Duration
 	// numWorkers stores the number of workers available to concurrently process jobs.
 	numWorkers int32
 	// numShadowWorkers stores the number of workers available to concurrently scan partitions
@@ -730,11 +756,15 @@ func NewQueueOptions(
 			ShadowContinuationSkipProbability: consts.QueueContinuationSkipProbability,
 		},
 		numWorkers:                     defaultNumWorkers,
+		minWorkersFree:                 minWorkersFree,
 		numShadowWorkers:               defaultNumShadowWorkers,
 		numBacklogNormalizationWorkers: defaultBacklogNormalizationWorkers,
 		pollTick:                       defaultPollTick,
 		shadowPollTick:                 defaultShadowPollTick,
 		backlogNormalizePollTick:       defaultBacklogNormalizePollTick,
+		partitionLeaseDuration:         PartitionLeaseDuration,
+		shadowPartitionLeaseDuration:   ShadowPartitionLeaseDuration,
+		backlogNormalizeLeaseDuration:  BacklogNormalizeLeaseDuration,
 		ActiveCheckTick:                defaultActiveCheckTick,
 		IdempotencyTTL:                 defaultIdempotencyTTL,
 		queueKindMapping:               make(map[string]string),

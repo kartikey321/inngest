@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
@@ -82,10 +83,14 @@ import (
 )
 
 const (
-	DefaultTick         = 150
-	DefaultTickDuration = time.Millisecond * DefaultTick
-	DefaultPollInterval = 5
-	DefaultQueueWorkers = 100
+	DefaultTick                  = 150
+	DefaultTickDuration          = time.Millisecond * DefaultTick
+	DefaultPollInterval          = 5
+	DefaultQueueWorkers          = 100
+	DefaultQueuePeekMin          = int(queue.DefaultQueuePeekMin)
+	DefaultQueuePeekMax          = int(queue.DefaultQueuePeekMax)
+	DefaultQueueMinWorkersFree   = 5
+	DefaultQueuePartitionLeaseMS = int(queue.PartitionLeaseDuration / time.Millisecond)
 
 	DefaultConnectGatewayPort      = 8289
 	DefaultConnectGatewayGRPCPort  = 50052
@@ -104,15 +109,21 @@ var defaultPartitionConstraintConfig = queue.PartitionConstraintConfig{
 
 // StartOpts configures the dev server
 type StartOpts struct {
-	Config        config.Config `json:"-"`
-	RootDir       string        `json:"dir"`
-	URLs          []string      `json:"urls"`
-	Autodiscover  bool          `json:"autodiscover"`
-	Poll          bool          `json:"poll"`
-	PollInterval  int           `json:"poll_interval"`
-	Tick          time.Duration `json:"tick"`
-	RetryInterval int           `json:"retry_interval"`
-	QueueWorkers  int           `json:"queue_workers"`
+	Config                config.Config `json:"-"`
+	RootDir               string        `json:"dir"`
+	URLs                  []string      `json:"urls"`
+	Autodiscover          bool          `json:"autodiscover"`
+	Poll                  bool          `json:"poll"`
+	PollInterval          int           `json:"poll_interval"`
+	Tick                  time.Duration `json:"tick"`
+	RetryInterval         int           `json:"retry_interval"`
+	QueueWorkers          int           `json:"queue_workers"`
+	QueuePeekMin          int           `json:"queue_peek_min"`
+	QueuePeekMax          int           `json:"queue_peek_max"`
+	QueueMinWorkersFree   int           `json:"queue_min_workers_free"`
+	QueuePartitionLeaseMS int           `json:"queue_partition_lease_ms"`
+	DisableFifoFunctions  string        `json:"disable_fifo_functions"`
+	DisableFifoAccounts   string        `json:"disable_fifo_accounts"`
 
 	// SigningKey is used to decide that the server should sign requests and
 	// validate responses where applicable, modelling cloud behaviour.
@@ -301,10 +312,38 @@ func start(ctx context.Context, opts StartOpts) error {
 
 	conditionalQueueTracer := itrace.NewConditionalTracer(itrace.QueueTracer(), itrace.AlwaysTrace)
 
+	queuePeekMin := opts.QueuePeekMin
+	if queuePeekMin <= 0 {
+		queuePeekMin = DefaultQueuePeekMin
+	}
+	if queuePeekMin > int(queue.AbsoluteQueuePeekMax) {
+		queuePeekMin = int(queue.AbsoluteQueuePeekMax)
+	}
+	queuePeekMax := opts.QueuePeekMax
+	if queuePeekMax <= 0 {
+		queuePeekMax = DefaultQueuePeekMax
+	}
+	if queuePeekMax > int(queue.AbsoluteQueuePeekMax) {
+		queuePeekMax = int(queue.AbsoluteQueuePeekMax)
+	}
+	if queuePeekMax < queuePeekMin {
+		queuePeekMax = queuePeekMin
+	}
+
+	queueMinWorkersFree := opts.QueueMinWorkersFree
+	if queueMinWorkersFree < 0 {
+		queueMinWorkersFree = 0
+	}
+
+	disableFifoFunctions := parseCSVSet(opts.DisableFifoFunctions)
+	disableFifoAccounts := parseCSVSet(opts.DisableFifoAccounts)
+
 	queueOpts := []queue.QueueOpt{
 		queue.WithRunMode(runMode),
 		queue.WithIdempotencyTTL(time.Hour),
 		queue.WithNumWorkers(int32(opts.QueueWorkers)),
+		queue.WithPeekSizeRange(int64(queuePeekMin), int64(queuePeekMax)),
+		queue.WithMinWorkersFree(int64(queueMinWorkersFree)),
 		queue.WithPollTick(opts.Tick),
 		queue.WithShadowPollTick(2 * opts.Tick),
 		queue.WithBacklogNormalizePollTick(5 * opts.Tick),
@@ -330,6 +369,18 @@ func start(ctx context.Context, opts StartOpts) error {
 			return queue.PartitionPausedInfo{}
 		}),
 		queue.WithConditionalTracer(conditionalQueueTracer),
+	}
+
+	if opts.QueuePartitionLeaseMS > 0 {
+		queueOpts = append(queueOpts, queue.WithPartitionLeaseDuration(time.Duration(opts.QueuePartitionLeaseMS)*time.Millisecond))
+	}
+
+	if len(disableFifoFunctions) > 0 {
+		queueOpts = append(queueOpts, queue.WithDisableFifoForFunctions(disableFifoFunctions))
+	}
+
+	if len(disableFifoAccounts) > 0 {
+		queueOpts = append(queueOpts, queue.WithDisableFifoForAccounts(disableFifoAccounts))
 	}
 
 	const rateLimitPrefix = "ratelimit"
@@ -1026,6 +1077,18 @@ func connectToOrCreateRedis(redisURI string) (rueidis.Client, error) {
 	}
 
 	return rc, nil
+}
+
+func parseCSVSet(raw string) map[string]struct{} {
+	entries := map[string]struct{}{}
+	for _, item := range strings.Split(raw, ",") {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		entries[trimmed] = struct{}{}
+	}
+	return entries
 }
 
 func connectToOrCreateRedisOption(redisURI string) (rueidis.ClientOption, error) {

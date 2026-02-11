@@ -26,12 +26,18 @@ type Config struct {
 	Port        string   `koanf:"port"`
 
 	// Advanced dev command configuration
-	PollInterval       int   `koanf:"poll-interval"`
-	RetryInterval      int   `koanf:"retry-interval"`
-	QueueWorkers       int   `koanf:"queue-workers"`
-	Tick               int   `koanf:"tick"`
-	ConnectGatewayPort int   `koanf:"connect-gateway-port"`
-	Persist            *bool `koanf:"persist"`
+	PollInterval          int    `koanf:"poll-interval"`
+	RetryInterval         int    `koanf:"retry-interval"`
+	QueueWorkers          int    `koanf:"queue-workers"`
+	QueuePeekMin          int    `koanf:"queue-peek-min"`
+	QueuePeekMax          int    `koanf:"queue-peek-max"`
+	QueueMinWorkersFree   int    `koanf:"queue-min-workers-free"`
+	QueuePartitionLeaseMS int    `koanf:"queue-partition-lease-ms"`
+	DisableFifoFunctions  string `koanf:"disable-fifo-functions"`
+	DisableFifoAccounts   string `koanf:"disable-fifo-accounts"`
+	Tick                  int    `koanf:"tick"`
+	ConnectGatewayPort    int    `koanf:"connect-gateway-port"`
+	Persist               *bool  `koanf:"persist"`
 
 	// Start command configuration
 	SigningKey string   `koanf:"signing-key"`

@@ -48,7 +48,7 @@ func (q *queueProcessor) ProcessPartition(ctx context.Context, p *QueuePartition
 	// processing the partition by N seconds, meaning the latency is increased by
 	// up to this period for scheduled items behind the concurrency limits.
 	_, err := Duration(ctx, q.primaryQueueShard.Name(), "partition_lease", q.Clock().Now(), func(ctx context.Context) (int, error) {
-		l, capacity, err := q.primaryQueueShard.PartitionLease(ctx, p, PartitionLeaseDuration, PartitionLeaseOptionDisableLeaseChecks(disableLeaseChecks))
+		l, capacity, err := q.primaryQueueShard.PartitionLease(ctx, p, q.partitionLeaseDuration, PartitionLeaseOptionDisableLeaseChecks(disableLeaseChecks))
 		p.LeaseID = l
 		return capacity, err
 	})
@@ -128,7 +128,7 @@ func (q *queueProcessor) ProcessPartition(ctx context.Context, p *QueuePartition
 
 	// Ensure that peek doesn't take longer than the partition lease, to
 	// reduce contention.
-	peekCtx, cancel := context.WithTimeout(ctx, PartitionLeaseDuration)
+	peekCtx, cancel := context.WithTimeout(ctx, q.partitionLeaseDuration)
 	defer cancel()
 
 	// We need to round ourselves up to the nearest second, then add another second
@@ -175,11 +175,7 @@ func (q *queueProcessor) ProcessPartition(ctx context.Context, p *QueuePartition
 
 	// parallel all queue names with internal mappings for now.
 	// XXX: Allow parallel partitions for all functions except for fns opting into FIFO
-	_, isSystemFn := q.queueKindMapping[p.Queue()]
-	_, parallelFn := q.disableFifoForFunctions[p.Queue()]
-	_, parallelAccount := q.disableFifoForAccounts[p.AccountID.String()]
-
-	parallel := parallelFn || parallelAccount || isSystemFn
+	parallel := q.shouldProcessPartitionInParallel(p)
 
 	iter := ProcessorIterator{
 		Partition:            p,
@@ -258,4 +254,11 @@ func (q *queueProcessor) ProcessPartition(ctx context.Context, p *QueuePartition
 		return err
 	}
 	return nil
+}
+
+func (q *queueProcessor) shouldProcessPartitionInParallel(p *QueuePartition) bool {
+	_, isSystemFn := q.queueKindMapping[p.Queue()]
+	_, parallelFn := q.disableFifoForFunctions[p.Queue()]
+	_, parallelAccount := q.disableFifoForAccounts[p.AccountID.String()]
+	return parallelFn || parallelAccount || isSystemFn
 }

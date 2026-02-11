@@ -208,7 +208,7 @@ func (q *queueProcessor) NormalizeBacklog(ctx context.Context, backlog *QueueBac
 			select {
 			case <-extendLeaseCtx.Done():
 				return
-			case <-time.Tick(BacklogNormalizeLeaseDuration / 2):
+			case <-time.Tick(q.backlogNormalizeLeaseDuration / 2):
 				if err := q.primaryQueueShard.ExtendBacklogNormalizationLease(ctx, q.Clock().Now(), backlog); err != nil {
 					switch err {
 					// can't extend since it's already expired
